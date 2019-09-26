@@ -21,6 +21,13 @@ open class BaseTaskPresenter<View : MvpView> : MvpPresenter<View>(), NetworkRetr
         private var beforeFun: (() -> Unit)? = null
         private var afterFun: (() -> Unit)? = null
 
+        fun setBaseMvpView(baseMvpView: BaseMvpView): BuilderJob<T> {
+            errorHandleFun = { baseMvpView.showNetworkError(it, this@BaseTaskPresenter) }
+            beforeFun = baseMvpView::showProgress
+            afterFun = baseMvpView::hideProgress
+            return this
+        }
+
         fun setErrorHandleFun(errorHandle: (Throwable) -> Unit): BuilderJob<T> {
             errorHandleFun = errorHandle
             return this
@@ -56,7 +63,7 @@ open class BaseTaskPresenter<View : MvpView> : MvpPresenter<View>(), NetworkRetr
                 baseMvpView::hideProgress)
     }
 
-    private fun <T> startTaskWithRetry(runnableFuture: RunnableFuture<T>, resultHandleFun: ((T?) -> Unit)? = null, errorHandleFun: ((Throwable) -> Unit)? = null, beforeFun: (() -> Unit)? = null, afterFun: (() -> Unit)? = null) {
+    protected fun <T> startTaskWithRetry(runnableFuture: RunnableFuture<T>, resultHandleFun: ((T?) -> Unit)? = null, errorHandleFun: ((Throwable) -> Unit)? = null, beforeFun: (() -> Unit)? = null, afterFun: (() -> Unit)? = null) {
         val errorHandleWithRetryFun: (Throwable) -> Unit = {
             errorHandleFun?.invoke(it)
             failedBlock = { startTaskWithRetry(runnableFuture, resultHandleFun, errorHandleFun, beforeFun, afterFun) }
@@ -72,15 +79,20 @@ open class BaseTaskPresenter<View : MvpView> : MvpPresenter<View>(), NetworkRetr
     protected fun <T> startTask(runnableFuture: RunnableFuture<T>, resultReceived: ((T?) -> Unit)? = null, errorReceived: ((Throwable) -> Unit)? = null, beforeFun: (() -> Unit)? = null, afterFun: (() -> Unit)? = null) {
         val newJob = GlobalScope.launch(Dispatchers.Main) {
             beforeFun?.invoke()
+            var isSuccessful = false
+            var result: T? = null
             try {
-                val result = withContext(Dispatchers.IO) { runnableFuture.run() }
-                afterFun?.invoke()
-                resultReceived?.invoke(result)
+                result = withContext(Dispatchers.IO) { runnableFuture.run() }
+                isSuccessful = true
             } catch (e: CancellationException) {
                 runnableFuture.cancel()
+                return@launch
             } catch (e: Exception) {
-                afterFun?.invoke()
                 errorReceived?.invoke(e)
+            }
+            afterFun?.invoke()
+            if (isSuccessful) {
+                resultReceived?.invoke(result)
             }
         }
         startedJobs.add(newJob)
